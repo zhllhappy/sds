@@ -75,7 +75,7 @@
       import * as THREE from 'three';
       import { Canvas, useFrame, useThree } from '@react-three/fiber';
       import { OrbitControls, PerspectiveCamera, Environment, Stars, Sparkles, Trail, Image as DreiImage } from '@react-three/drei';
-      import { EffectComposer, Bloom, Vignette, DepthOfField } from '@react-three/postprocessing';
+      import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 
       // --- Types ---
       enum AppMode {
@@ -128,7 +128,10 @@
 
         useEffect(() => {
           if (!videoRef.current) return;
-          if (!window.Hands) return;
+          if (!window.Hands) {
+             console.error("MediaPipe Hands not loaded");
+             return;
+          }
 
           const onResults = (results: any) => {
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
@@ -524,7 +527,7 @@
                 <Environment preset="city" />
 
                 <EffectComposer enableNormalPass={false}>
-                   <DepthOfField target={[0, 0, 20]} focalLength={0.8} bokehScale={mode === AppMode.PHOTO_VIEW ? 10 : 0} height={700} />
+                  {/* Removed DepthOfField to prevent photo blur */}
                   <Bloom luminanceThreshold={0.8} mipmapBlur intensity={1.2} radius={0.4} />
                   <Vignette eskil={false} offset={0.1} darkness={1.1} />
                 </EffectComposer>
