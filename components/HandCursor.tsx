@@ -1,24 +1,16 @@
-import React, { useRef, useLayoutEffect } from 'react';
+import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Trail } from '@react-three/drei';
 import * as THREE from 'three';
-import { HandData, GestureType, AppMode } from '../types';
+import { HandData, GestureType } from '../types';
 
 interface HandCursorProps {
   handData: HandData;
-  targetRef: React.MutableRefObject<THREE.Vector3>;
-  mode: AppMode;
 }
 
-export const HandCursor: React.FC<HandCursorProps> = ({ handData, targetRef, mode }) => {
+export const HandCursor: React.FC<HandCursorProps> = ({ handData }) => {
   const meshRef = useRef<THREE.Mesh>(null);
-  const beamRef = useRef<THREE.Mesh>(null);
   const { viewport } = useThree();
-
-  // Temporary vectors for math to avoid garbage collection
-  const vecA = useRef(new THREE.Vector3());
-  const vecB = useRef(new THREE.Vector3());
-  const vecMid = useRef(new THREE.Vector3());
 
   useFrame((state, delta) => {
     if (!meshRef.current) return;
@@ -48,42 +40,6 @@ export const HandCursor: React.FC<HandCursorProps> = ({ handData, targetRef, mod
         material.color.setHex(0xFFD700);
         meshRef.current.scale.lerp(new THREE.Vector3(1, 1, 1), 0.2);
     }
-
-    // 3. MAGIC BEAM LOGIC (Connecting Hand to Photo)
-    if (beamRef.current) {
-        if (mode === AppMode.PHOTO_VIEW && handData.isPresent) {
-            beamRef.current.visible = true;
-            
-            // Start point (Hand)
-            vecA.current.copy(meshRef.current.position);
-            // End point (Photo Target - read from shared ref)
-            vecB.current.copy(targetRef.current);
-
-            // Calculate distance
-            const distance = vecA.current.distanceTo(vecB.current);
-            
-            // Midpoint
-            vecMid.current.addVectors(vecA.current, vecB.current).multiplyScalar(0.5);
-            
-            // Position beam at midpoint
-            beamRef.current.position.copy(vecMid.current);
-            
-            // Orient beam to face target
-            beamRef.current.lookAt(vecB.current);
-            // Rotate 90deg on X because CylinderGeometry is vertical (Y-axis) by default
-            beamRef.current.rotateX(Math.PI / 2);
-
-            // Scale length
-            beamRef.current.scale.set(1, 1, distance);
-
-            // Animate texture or opacity if we had a texture, for now pulsate thickness
-            const pulse = 1 + Math.sin(state.clock.elapsedTime * 10) * 0.2;
-            beamRef.current.scale.set(0.1 * pulse, 0.1 * pulse, distance);
-
-        } else {
-            beamRef.current.visible = false;
-        }
-    }
   });
 
   if (!handData.isPresent) return null;
@@ -105,27 +61,6 @@ export const HandCursor: React.FC<HandCursorProps> = ({ handData, targetRef, mod
           />
         </mesh>
       </Trail>
-
-      {/* Magic Beam (Cylinder) */}
-      <mesh ref={beamRef} visible={false}>
-          {/* Default cylinder is radius=1, height=1 */}
-          <cylinderGeometry args={[1, 1, 1, 8, 1, true]} /> 
-          <meshBasicMaterial 
-            color="#FFD700" 
-            transparent 
-            opacity={0.3} 
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-          />
-      </mesh>
-      
-      {/* Light following hand */}
-      <pointLight 
-        position={[meshRef.current?.position.x || 0, meshRef.current?.position.y || 0, 12]} 
-        intensity={2} 
-        distance={10} 
-        color="#FFD700" 
-      />
     </>
   );
 };

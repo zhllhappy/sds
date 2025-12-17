@@ -4,13 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Gesture Christmas Tree</title>
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Preconnect for fonts/assets -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
-    <!-- MediaPipe Hands Global Script -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -31,25 +27,575 @@
         }
       }
     </script>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+
+    <!-- Styles -->
     <style>
       body { margin: 0; background-color: #050505; color: white; overflow: hidden; }
       canvas { width: 100vw; height: 100vh; display: block; }
+      #root { width: 100%; height: 100%; }
     </style>
-  <script type="importmap">
+
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+
+    <!-- Babel for in-browser JSX transformation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Import Map -->
+    <script type="importmap">
 {
   "imports": {
-    "@react-three/fiber": "https://esm.sh/@react-three/fiber@^9.4.2",
+    "react": "https://esm.sh/react@18.2.0",
+    "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "three": "https://esm.sh/three@0.160.0",
+    "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.15.14?external=react,react-dom,three",
+    "@react-three/drei": "https://esm.sh/@react-three/drei@9.96.1?external=react,react-dom,three,@react-three/fiber",
+    "@react-three/postprocessing": "https://esm.sh/@react-three/postprocessing@2.16.0?external=react,react-dom,three,@react-three/fiber",
+    "uuid": "https://esm.sh/uuid@9.0.1",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "three": "https://esm.sh/three@^0.182.0",
-    "@react-three/drei": "https://esm.sh/@react-three/drei@^10.7.7",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "@react-three/postprocessing": "https://esm.sh/@react-three/postprocessing@^3.0.4"
+    "react/": "https://esm.sh/react@^19.2.3/"
   }
 }
 </script>
-</head>
+  </head>
   <body>
     <div id="root"></div>
+
+    <!-- Main Application Script -->
+    <script type="text/babel" data-type="module" data-presets="react,typescript">
+      import React, { useState, useRef, useEffect, useMemo } from 'react';
+      import { createRoot } from 'react-dom/client';
+      import * as THREE from 'three';
+      import { Canvas, useFrame, useThree } from '@react-three/fiber';
+      import { OrbitControls, PerspectiveCamera, Environment, Stars, Sparkles, Trail, Image as DreiImage } from '@react-three/drei';
+      import { EffectComposer, Bloom, Vignette, DepthOfField } from '@react-three/postprocessing';
+
+      // --- Types ---
+      enum AppMode {
+        TREE = 'TREE',
+        SCATTER = 'SCATTER',
+        PHOTO_VIEW = 'PHOTO_VIEW'
+      }
+
+      enum GestureType {
+        NONE = 'NONE',
+        OPEN_HAND = 'OPEN_HAND',
+        FIST = 'FIST',
+        PINCH = 'PINCH'
+      }
+
+      interface HandData {
+        gesture: GestureType;
+        x: number;
+        y: number;
+        isPresent: boolean;
+      }
+
+      interface ParticleData {
+        id: string;
+        type: 'sphere' | 'cube' | 'candy' | 'photo';
+        startPos: [number, number, number];
+        treePos: [number, number, number];
+        scatterPos: [number, number, number];
+        color: string;
+        scale: number;
+        photoUrl?: string;
+      }
+
+      // --- Icons ---
+      const UploadIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2 2H5a2 2 0 0 1-2 2H5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      );
+
+      // --- Hook: useHandTracking ---
+      const useHandTracking = (videoRef: React.RefObject<HTMLVideoElement>) => {
+        const [handData, setHandData] = useState<HandData>({
+          gesture: GestureType.NONE,
+          x: 0.5,
+          y: 0.5,
+          isPresent: false,
+        });
+
+        const handsRef = useRef<any>(null);
+        const requestRef = useRef<number | null>(null);
+
+        useEffect(() => {
+          if (!videoRef.current) return;
+          if (!window.Hands) return;
+
+          const onResults = (results: any) => {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+              const landmarks = results.multiHandLandmarks[0];
+              
+              const palmBase = landmarks[0];
+              const middleFingerKnuckle = landmarks[9];
+              const centerX = (palmBase.x + middleFingerKnuckle.x) / 2;
+              const centerY = (palmBase.y + middleFingerKnuckle.y) / 2;
+
+              const isIndexOpen = landmarks[8].y < landmarks[6].y;
+              const isMiddleOpen = landmarks[12].y < landmarks[10].y;
+              const isRingOpen = landmarks[16].y < landmarks[14].y;
+              const isPinkyOpen = landmarks[20].y < landmarks[18].y;
+
+              const openFingersCount = [isIndexOpen, isMiddleOpen, isRingOpen, isPinkyOpen].filter(Boolean).length;
+              const handScale = Math.hypot(landmarks[0].x - landmarks[9].x, landmarks[0].y - landmarks[9].y);
+              const pinchDist = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
+
+              let gesture = GestureType.NONE;
+              if (openFingersCount === 0) {
+                gesture = GestureType.FIST;
+              } else if (pinchDist < 0.05 || pinchDist < handScale * 0.5) { 
+                gesture = GestureType.PINCH;
+              } else if (openFingersCount >= 3) {
+                gesture = GestureType.OPEN_HAND;
+              }
+
+              setHandData({
+                gesture,
+                x: 1 - centerX,
+                y: centerY,
+                isPresent: true
+              });
+            } else {
+              setHandData(prev => ({ ...prev, isPresent: false, gesture: GestureType.NONE }));
+            }
+          };
+
+          const hands = new window.Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
+          });
+
+          hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+          });
+
+          hands.onResults(onResults);
+          handsRef.current = hands;
+
+          const startCamera = async () => {
+              try {
+                  const stream = await navigator.mediaDevices.getUserMedia({
+                      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+                  });
+                  if (videoRef.current) {
+                      videoRef.current.srcObject = stream;
+                      await videoRef.current.play();
+                      processFrame();
+                  }
+              } catch (e) {
+                  console.error("Error accessing camera:", e);
+              }
+          };
+
+          const processFrame = async () => {
+              if (!videoRef.current || !handsRef.current) return;
+              if (videoRef.current.readyState >= 2 && !videoRef.current.paused && !videoRef.current.ended) {
+                  try { await handsRef.current.send({ image: videoRef.current }); } catch (e) { }
+              }
+              requestRef.current = requestAnimationFrame(processFrame);
+          };
+
+          startCamera();
+
+          return () => {
+              if (requestRef.current) cancelAnimationFrame(requestRef.current);
+              if (handsRef.current) handsRef.current.close();
+          };
+        }, [videoRef]);
+
+        return handData;
+      };
+
+      // --- Component: HandCursor ---
+      const HandCursor = ({ handData }: { handData: HandData }) => {
+        const meshRef = useRef<THREE.Mesh>(null);
+        const { viewport } = useThree();
+
+        useFrame((state, delta) => {
+          if (!meshRef.current) return;
+
+          const targetX = (handData.x - 0.5) * viewport.width;
+          const targetY = -(handData.y - 0.5) * viewport.height;
+
+          meshRef.current.position.x = THREE.MathUtils.lerp(meshRef.current.position.x, targetX, 0.2);
+          meshRef.current.position.y = THREE.MathUtils.lerp(meshRef.current.position.y, targetY, 0.2);
+          meshRef.current.position.z = 10;
+
+          const material = meshRef.current.material as THREE.MeshStandardMaterial;
+          
+          if (handData.gesture === GestureType.PINCH) {
+              material.emissive.setHex(0xffffff);
+              material.color.setHex(0xffffff);
+              meshRef.current.scale.lerp(new THREE.Vector3(0.5, 0.5, 0.5), 0.2);
+          } else if (handData.gesture === GestureType.FIST) {
+              material.emissive.setHex(0xff0000);
+              material.color.setHex(0xff0000);
+              meshRef.current.scale.lerp(new THREE.Vector3(1.2, 1.2, 1.2), 0.2);
+          } else {
+              material.emissive.setHex(0xFFD700);
+              material.color.setHex(0xFFD700);
+              meshRef.current.scale.lerp(new THREE.Vector3(1, 1, 1), 0.2);
+          }
+        });
+
+        if (!handData.isPresent) return null;
+
+        return (
+          <Trail width={2} length={6} color={new THREE.Color("#FFD700")} attenuation={(t) => t * t} target={meshRef}>
+            <mesh ref={meshRef}>
+              <sphereGeometry args={[0.3, 16, 16]} />
+              <meshStandardMaterial emissive="#FFD700" emissiveIntensity={2} toneMapped={false} />
+            </mesh>
+          </Trail>
+        );
+      };
+
+      // --- Component: MagicParticles ---
+      const COUNT = 400;
+      const TREE_HEIGHT = 15;
+      const TREE_RADIUS_BASE = 6;
+      const COLORS = ['#2F4F4F', '#FFD700', '#8B0000', '#ffffff'];
+
+      const SingleParticle = ({ data, mode, isTargetPhoto, targetRef }) => {
+          const meshRef = useRef(null);
+          const targetPos = new THREE.Vector3();
+          const dummyVec = useRef(new THREE.Vector3());
+
+          useFrame((state, delta) => {
+              if (!meshRef.current) return;
+
+              if (mode === AppMode.TREE) {
+                  targetPos.set(...data.treePos);
+              } else if (mode === AppMode.SCATTER) {
+                   const time = state.clock.getElapsedTime();
+                   const noiseX = Math.sin(time + data.startPos[0]) * 0.5;
+                   const noiseY = Math.cos(time + data.startPos[1]) * 0.5;
+                   targetPos.set(data.scatterPos[0] + noiseX, data.scatterPos[1] + noiseY, data.scatterPos[2]);
+              } else if (mode === AppMode.PHOTO_VIEW) {
+                  if (isTargetPhoto) {
+                      const camera = state.camera;
+                      const distanceInFront = 5; 
+                      const worldTarget = dummyVec.current.copy(camera.position)
+                          .add(new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).multiplyScalar(distanceInFront));
+                      
+                      if (meshRef.current.parent) {
+                          targetPos.copy(meshRef.current.parent.worldToLocal(worldTarget.clone()));
+                      } else {
+                          targetPos.copy(worldTarget);
+                      }
+                      meshRef.current.getWorldPosition(targetRef.current);
+                  } else {
+                      targetPos.set(data.scatterPos[0], data.scatterPos[1], data.scatterPos[2] - 5);
+                  }
+              }
+
+              const speed = isTargetPhoto ? 0.2 : 0.05;
+              meshRef.current.position.lerp(targetPos, speed);
+
+              if (isTargetPhoto && mode === AppMode.PHOTO_VIEW) {
+                  if (meshRef.current.parent) {
+                      const parentQuat = new THREE.Quaternion();
+                      meshRef.current.parent.getWorldQuaternion(parentQuat);
+                      const cameraQuat = state.camera.quaternion.clone();
+                      meshRef.current.quaternion.copy(parentQuat.invert().multiply(cameraQuat));
+                  } else {
+                      meshRef.current.quaternion.copy(state.camera.quaternion);
+                  }
+              } else {
+                  meshRef.current.rotation.x += delta * 0.5;
+                  meshRef.current.rotation.y += delta * 0.3;
+                  if (data.type === 'photo') {
+                       meshRef.current.lookAt(state.camera.position);
+                  }
+              }
+              
+              let targetScale = data.scale;
+              if (isTargetPhoto) targetScale = 3.0; 
+              meshRef.current.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.1);
+          });
+
+          const isGold = data.color === '#FFD700';
+
+          if (data.type === 'photo' && data.photoUrl) {
+              return (
+                  <group ref={meshRef} position={data.startPos}>
+                       <group visible={isTargetPhoto}>
+                           <mesh position={[0, 0, -0.1]}>
+                               <boxGeometry args={[1.1, 1.1, 0.05]} />
+                               <meshStandardMaterial color="#FFD700" roughness={0.2} metalness={1.0} toneMapped={false} />
+                           </mesh>
+                           <mesh position={[0, 0, -0.05]}>
+                              <boxGeometry args={[1.15, 1.15, 0.01]} />
+                              <meshStandardMaterial color="#B8860B" roughness={0.2} metalness={1.0} toneMapped={false} />
+                           </mesh>
+                       </group>
+                       <DreiImage url={data.photoUrl} transparent scale={[1, 1]} position={[0, 0, 0.1]} />
+                  </group>
+              );
+          }
+
+          return (
+              <mesh ref={meshRef} position={data.startPos}>
+                  {data.type === 'sphere' && <sphereGeometry args={[1, 16, 16]} />}
+                  {data.type === 'cube' && <boxGeometry args={[1, 1, 1]} />}
+                  {data.type === 'candy' && <cylinderGeometry args={[0.3, 0.3, 1.5, 8]} />}
+                  <meshStandardMaterial 
+                      color={data.color} 
+                      roughness={isGold ? 0.1 : 0.8} 
+                      metalness={isGold ? 1.0 : 0.0}
+                      emissive={data.color}
+                      emissiveIntensity={isGold ? 0.2 : 0}
+                      toneMapped={!isGold}
+                  />
+              </mesh>
+          );
+      };
+
+      const MagicParticles = ({ mode, photos, handData, setMode, targetRef }) => {
+        const groupRef = useRef(null);
+        const [activePhotoIndex, setActivePhotoIndex] = useState(null);
+
+        const particles = useMemo(() => {
+          const temp = [];
+          for (let i = 0; i < COUNT; i++) {
+            const t = i / COUNT;
+            const angle = t * Math.PI * 20;
+            const y = -TREE_HEIGHT / 2 + t * TREE_HEIGHT;
+            const radius = TREE_RADIUS_BASE * (1 - t);
+            
+            const treeX = Math.cos(angle) * radius;
+            const treeZ = Math.sin(angle) * radius;
+
+            const u = Math.random();
+            const v = Math.random();
+            const theta = 2 * Math.PI * u;
+            const phi = Math.acos(2 * v - 1);
+            const r = 10 + Math.random() * 15;
+            const scatterX = r * Math.sin(phi) * Math.cos(theta);
+            const scatterY = r * Math.sin(phi) * Math.sin(theta);
+            const scatterZ = r * Math.cos(phi);
+
+            const typeRandom = Math.random();
+            let type = 'sphere';
+            if (typeRandom > 0.6) type = 'cube';
+            if (typeRandom > 0.9) type = 'candy';
+
+            temp.push({
+              id: `p-${i}`,
+              type,
+              startPos: [scatterX, scatterY, scatterZ],
+              treePos: [treeX, y, treeZ],
+              scatterPos: [scatterX, scatterY, scatterZ],
+              color: COLORS[Math.floor(Math.random() * COLORS.length)],
+              scale: Math.random() * 0.3 + 0.1,
+            });
+          }
+          return temp;
+        }, []);
+
+        const photoParticles = useMemo(() => {
+          if (photos.length === 0) return [];
+          return photos.map((url, i) => {
+            const t = (i + 0.5) / photos.length;
+            const angle = t * Math.PI * 10;
+            const y = -TREE_HEIGHT / 3 + t * (TREE_HEIGHT * 0.6);
+            const radius = TREE_RADIUS_BASE * (1 - ((y + TREE_HEIGHT/2)/TREE_HEIGHT)) + 0.5;
+            
+            const treeX = Math.cos(angle) * radius;
+            const treeZ = Math.sin(angle) * radius;
+             const scatterX = (Math.random() - 0.5) * 20;
+             const scatterY = (Math.random() - 0.5) * 10;
+             const scatterZ = (Math.random() - 0.5) * 5 + 5; 
+
+             return {
+               id: `photo-${i}`,
+               type: 'photo',
+               startPos: [scatterX, scatterY, scatterZ],
+               treePos: [treeX, y, treeZ],
+               scatterPos: [scatterX, scatterY, scatterZ],
+               color: '#ffffff',
+               scale: 1.5,
+               photoUrl: url
+             };
+          });
+        }, [photos]);
+
+        const allParticles = [...particles, ...photoParticles];
+
+        useFrame((state, delta) => {
+          if (!groupRef.current) return;
+          if (mode === AppMode.SCATTER && handData.isPresent) {
+              const targetRotY = (handData.x - 0.5) * Math.PI; 
+              const targetRotX = (handData.y - 0.5) * Math.PI * 0.5;
+              groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, targetRotY, 0.1);
+              groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, targetRotX, 0.1);
+          } else if (mode === AppMode.TREE) {
+              groupRef.current.rotation.y += delta * 0.2;
+              groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, 0, 0.1);
+          }
+
+          if (handData.gesture === GestureType.PINCH && mode === AppMode.SCATTER && activePhotoIndex === null && photoParticles.length > 0) {
+              const randomIndex = Math.floor(Math.random() * photoParticles.length);
+              setActivePhotoIndex(randomIndex);
+              setMode(AppMode.PHOTO_VIEW);
+          }
+        });
+
+        useEffect(() => {
+            if (mode !== AppMode.PHOTO_VIEW) {
+                setActivePhotoIndex(null);
+            }
+        }, [mode]);
+
+        return (
+          <group ref={groupRef}>
+            {allParticles.map((p) => (
+              <SingleParticle 
+                  key={p.id} 
+                  data={p} 
+                  mode={mode} 
+                  isTargetPhoto={p.type === 'photo' && activePhotoIndex !== null && photoParticles[activePhotoIndex].id === p.id}
+                  targetRef={targetRef}
+              />
+            ))}
+            <mesh position={[0, TREE_HEIGHT / 2 + 1, 0]}>
+               <octahedronGeometry args={[1]} />
+               <meshStandardMaterial color="#FFD700" emissive="#FFD700" emissiveIntensity={2} toneMapped={false} />
+            </mesh>
+          </group>
+        );
+      };
+
+      // --- Main App Component ---
+      const App = () => {
+        const [mode, setMode] = useState(AppMode.TREE);
+        const [photos, setPhotos] = useState([]);
+        const videoRef = useRef(null);
+        const handData = useHandTracking(videoRef);
+        const targetRef = useRef(new THREE.Vector3(0, 0, 0));
+
+        useEffect(() => {
+          if (!handData.isPresent) return;
+          if (handData.gesture === GestureType.FIST && mode !== AppMode.TREE) {
+            setMode(AppMode.TREE);
+          } else if (handData.gesture === GestureType.OPEN_HAND && mode === AppMode.TREE) {
+            setMode(AppMode.SCATTER);
+          } else if (handData.gesture === GestureType.OPEN_HAND && mode === AppMode.PHOTO_VIEW) {
+            setMode(AppMode.SCATTER);
+          }
+        }, [handData.gesture, handData.isPresent, mode]);
+
+        const handlePhotoUpload = (e) => {
+          if (e.target.files) {
+            const newPhotos = Array.from(e.target.files).map(file => URL.createObjectURL(file));
+            setPhotos(prev => [...prev, ...newPhotos]);
+          }
+        };
+
+        return (
+          <div className="relative w-full h-screen bg-christmas-dark overflow-hidden font-sans">
+            <video ref={videoRef} className="hidden" playsInline muted autoPlay />
+            
+            <div className="absolute inset-0 z-0">
+              <Canvas gl={{ antialias: false, toneMappingExposure: 1.5 }}>
+                <PerspectiveCamera makeDefault position={[0, 0, 25]} fov={50} />
+                <color attach="background" args={['#050505']} />
+                <fog attach="fog" args={['#050505', 40, 120]} />
+                
+                <ambientLight intensity={0.5} />
+                <pointLight position={[10, 10, 10]} intensity={1} color="#FFD700" />
+                <spotLight position={[-10, 15, 10]} angle={0.3} penumbra={1} intensity={2} color="#8B0000" />
+
+                <HandCursor handData={handData} />
+                <MagicParticles mode={mode} photos={photos} handData={handData} setMode={setMode} targetRef={targetRef} />
+                
+                <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
+                <Sparkles count={800} scale={[30, 30, 20]} size={6} speed={0.5} opacity={0.8} color="#E0F7FA" position={[0, 5, 0]} />
+                <Environment preset="city" />
+
+                <EffectComposer enableNormalPass={false}>
+                   <DepthOfField target={[0, 0, 20]} focalLength={0.8} bokehScale={mode === AppMode.PHOTO_VIEW ? 10 : 0} height={700} />
+                  <Bloom luminanceThreshold={0.8} mipmapBlur intensity={1.2} radius={0.4} />
+                  <Vignette eskil={false} offset={0.1} darkness={1.1} />
+                </EffectComposer>
+                
+                <OrbitControls enableZoom={false} enablePan={false} enableRotate={mode === AppMode.TREE} autoRotate={mode === AppMode.TREE} autoRotateSpeed={0.5} />
+              </Canvas>
+            </div>
+
+            <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-8">
+              <header className="flex justify-between items-start">
+                <div>
+                  <h1 className="text-4xl font-serif font-bold text-christmas-gold drop-shadow-lg tracking-wider">Noel Magic</h1>
+                  <p className="text-gray-300 text-sm mt-2 max-w-xs drop-shadow-md">A WebGL Interactive Christmas Experience</p>
+                </div>
+                <div className="flex gap-4 pointer-events-auto">
+                   <label className="flex items-center gap-2 bg-christmas-green/80 hover:bg-christmas-green text-white px-4 py-2 rounded-full backdrop-blur-sm transition-all cursor-pointer border border-christmas-gold/30 hover:scale-105 active:scale-95 shadow-lg shadow-christmas-gold/20">
+                     <UploadIcon />
+                     <span className="text-sm font-semibold">Add Photos</span>
+                     <input type="file" multiple accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+                   </label>
+                </div>
+              </header>
+
+              <div className="absolute top-1/2 right-8 transform -translate-y-1/2 flex flex-col items-end gap-6">
+                 <div className={`transition-all duration-500 flex flex-col items-end ${mode === AppMode.TREE ? 'opacity-100 translate-x-0' : 'opacity-40 translate-x-4'}`}>
+                    <div className="w-3 h-3 rounded-full bg-christmas-gold shadow-[0_0_10px_#FFD700] mb-2"></div>
+                    <span className="text-christmas-gold font-serif text-lg">Tree Mode</span>
+                 </div>
+                 <div className={`transition-all duration-500 flex flex-col items-end ${mode === AppMode.SCATTER ? 'opacity-100 translate-x-0' : 'opacity-40 translate-x-4'}`}>
+                    <div className="w-3 h-3 rounded-full bg-blue-400 shadow-[0_0_10px_#60A5FA] mb-2"></div>
+                    <span className="text-blue-100 font-serif text-lg">Scatter Mode</span>
+                 </div>
+                 <div className={`transition-all duration-500 flex flex-col items-end ${mode === AppMode.PHOTO_VIEW ? 'opacity-100 translate-x-0' : 'opacity-40 translate-x-4'}`}>
+                    <div className="w-3 h-3 rounded-full bg-white shadow-[0_0_10px_#ffffff] mb-2"></div>
+                    <span className="text-white font-serif text-lg">Focus Mode</span>
+                 </div>
+              </div>
+
+              <div className="absolute top-24 left-8 pointer-events-auto bg-black/40 p-4 rounded-xl backdrop-blur-md border border-white/10 w-64 shadow-2xl">
+                 <div className="flex items-center gap-3 mb-3 border-b border-white/10 pb-2">
+                   <div className={`w-2 h-2 rounded-full ${handData.isPresent ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500'}`}></div>
+                   <span className="text-xs font-mono text-gray-300 uppercase">
+                     {handData.isPresent ? 'Camera Active' : 'Detecting Hands...'}
+                   </span>
+                 </div>
+                 <div className="space-y-3">
+                   <div className={`flex items-center gap-3 transition-opacity ${handData.gesture === GestureType.FIST ? 'opacity-100 text-christmas-gold' : 'opacity-40 text-gray-400'}`}>
+                     <span className="text-xl">✊</span>
+                     <span className="text-sm font-medium">Fist: Form Tree</span>
+                   </div>
+                   <div className={`flex items-center gap-3 transition-opacity ${handData.gesture === GestureType.OPEN_HAND ? 'opacity-100 text-blue-300' : 'opacity-40 text-gray-400'}`}>
+                     <span className="text-xl">🖐</span>
+                     <span className="text-sm font-medium">Open: Scatter</span>
+                   </div>
+                   <div className={`flex items-center gap-3 transition-opacity ${handData.gesture === GestureType.PINCH ? 'opacity-100 text-white' : 'opacity-40 text-gray-400'}`}>
+                     <span className="text-xl">👌</span>
+                     <span className="text-sm font-medium">Pinch: Grab Photo</span>
+                   </div>
+                 </div>
+              </div>
+
+              <footer className="w-full text-center pb-4 pointer-events-none">
+                <p className="text-white/30 text-xs font-serif italic">"Magic is in the air"</p>
+              </footer>
+            </div>
+          </div>
+        );
+      };
+
+      const root = createRoot(document.getElementById('root'));
+      root.render(<App />);
+    </script>
   </body>
 </html>

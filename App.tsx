@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, Stars, Sparkles } from '@react-three/drei';
-import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
+import { EffectComposer, Bloom, Vignette, DepthOfField } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { AppMode, GestureType } from './types';
 import { MagicParticles } from './components/MagicParticles';
@@ -10,7 +10,7 @@ import { useHandTracking } from './hooks/useHandTracking';
 
 // UI Icons
 const UploadIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2 2H5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 );
 
 const App: React.FC = () => {
@@ -20,7 +20,6 @@ const App: React.FC = () => {
   const handData = useHandTracking(videoRef);
   
   // Shared reference for the active photo's 3D position
-  // MagicParticles writes to this, HandCursor reads from this
   const targetRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
 
   // Gesture State Transition Logic
@@ -35,7 +34,6 @@ const App: React.FC = () => {
       // Release photo
       setMode(AppMode.SCATTER);
     }
-    // Pinch logic is handled inside 3D component to access particle data
   }, [handData.gesture, handData.isPresent, mode]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -61,14 +59,17 @@ const App: React.FC = () => {
         <Canvas gl={{ antialias: false, toneMappingExposure: 1.5 }}>
           <PerspectiveCamera makeDefault position={[0, 0, 25]} fov={50} />
           
-          <color attach="background" args={['#020202']} />
+          <color attach="background" args={['#050505']} />
+          
+          {/* Fog for depth - darker background */}
+          <fog attach="fog" args={['#050505', 40, 120]} />
           
           <ambientLight intensity={0.5} />
           <pointLight position={[10, 10, 10]} intensity={1} color="#FFD700" />
           <spotLight position={[-10, 15, 10]} angle={0.3} penumbra={1} intensity={2} color="#8B0000" />
 
-          {/* Magic Hand Cursor - Provides visual feedback and connection beam */}
-          <HandCursor handData={handData} targetRef={targetRef} mode={mode} />
+          {/* Magic Hand Cursor */}
+          <HandCursor handData={handData} />
 
           <MagicParticles 
             mode={mode} 
@@ -80,28 +81,34 @@ const App: React.FC = () => {
           
           <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
           
-          {/* Enhanced Falling Snow Effect */}
           <Sparkles 
-            count={1500} 
-            scale={[40, 40, 30]} // Much wider area to ensure visibility
-            size={8} // Larger flakes
-            speed={0.8} // Slightly faster fall
+            count={800} 
+            scale={[30, 30, 20]}
+            size={6} 
+            speed={0.5}
             opacity={0.8} 
-            color="#E0F7FA" // Icy white blue
-            position={[0, 0, 0]} 
+            color="#E0F7FA" 
+            position={[0, 5, 0]} 
           />
           
           <Environment preset="city" />
 
-          <EffectComposer disableNormalPass>
-            <Bloom luminanceThreshold={0.7} mipmapBlur intensity={1.2} radius={0.4} />
+          <EffectComposer enableNormalPass={false}>
+             {/* Depth of Field */}
+             <DepthOfField 
+                target={[0, 0, 20]} 
+                focalLength={0.8} 
+                bokehScale={mode === AppMode.PHOTO_VIEW ? 10 : 0} 
+                height={700} 
+             />
+            <Bloom luminanceThreshold={0.8} mipmapBlur intensity={1.2} radius={0.4} />
             <Vignette eskil={false} offset={0.1} darkness={1.1} />
           </EffectComposer>
           
           <OrbitControls 
             enableZoom={false} 
             enablePan={false} 
-            enableRotate={mode === AppMode.TREE} // Disable manual rotate in scatter mode (hand does it)
+            enableRotate={mode === AppMode.TREE} 
             autoRotate={mode === AppMode.TREE}
             autoRotateSpeed={0.5}
           />
